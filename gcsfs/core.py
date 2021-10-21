@@ -60,6 +60,14 @@ QUOTE_TABLE = str.maketrans(
     }
 )
 
+SUPPORTED_GOOGLE_METADATA = {
+    "content_encoding": "contentEncoding",
+    "cache_control": "cacheControl",
+    "content_disposition": "contentDisposition",
+    "content_language": "contentLanguage",
+    "custom_time": "customTime",
+}
+
 
 def quote_plus(s):
     """
@@ -693,7 +701,8 @@ class GCSFileSystem(AsyncFileSystem):
     getxattr = sync_wrapper(_getxattr)
 
     async def _setxattrs(
-        self, path, content_type=None, content_encoding=None, **kwargs
+        self, path, content_type=None, content_encoding=None, google_metadata=None,
+        **kwargs
     ):
         """Set/delete/add writable metadata attributes
 
@@ -716,6 +725,7 @@ class GCSFileSystem(AsyncFileSystem):
             i_json["contentType"] = content_type
         if content_encoding is not None:
             i_json["contentEncoding"] = content_encoding
+        i_json.update(await convert_google_metadata(google_metadata))
 
         bucket, key = self.split_path(path)
         o_json = await self._call(
@@ -1043,6 +1053,7 @@ class GCSFileSystem(AsyncFileSystem):
         consistency=None,
         metadata=None,
         autocommit=True,
+        google_metadata=None,
         **kwargs,
     ):
         """
@@ -1064,6 +1075,7 @@ class GCSFileSystem(AsyncFileSystem):
             metadata=metadata,
             acl=acl,
             autocommit=autocommit,
+            google_metadata=google_metadata,
             **kwargs,
         )
 
@@ -1132,6 +1144,7 @@ class GCSFile(fsspec.spec.AbstractBufferedFile):
         metadata=None,
         content_type=None,
         timeout=None,
+        google_metadata=None,
         **kwargs,
     ):
         """
@@ -1160,6 +1173,15 @@ class GCSFile(fsspec.spec.AbstractBufferedFile):
             content types at https://www.iana.org/assignments/media-types/media-types.txt
         metadata: dict
             Custom metadata, in key/value pairs, added at file creation
+        google_metadata: dict
+            Google metadata, in key/value pairs, supported keys:
+                - cache_control
+                - content_disposition
+                - content_encoding
+                - content_language
+                - custom_time
+            More info:
+            https://cloud.google.com/storage/docs/metadata#mutable
         timeout: int
             Timeout seconds for the asynchronous callback.
         """
@@ -1190,6 +1212,13 @@ class GCSFile(fsspec.spec.AbstractBufferedFile):
             "contentType", "application/octet-stream"
         )
         self.metadata = metadata or det.get("metadata", {})
+        self.google_metadata = sync(
+            self.gcsfs.loop,
+            convert_google_metadata,
+            det,
+            from_google=True
+        )
+        self.google_metadata.update(google_metadata or {})
         self.timeout = timeout
         if mode == "wb":
             if self.blocksize < GCS_MIN_BLOCK_SIZE:
@@ -1290,6 +1319,7 @@ class GCSFile(fsspec.spec.AbstractBufferedFile):
             self.key,
             self.content_type,
             self.metadata,
+            self.google_metadata,
             timeout=self.timeout,
         )
 
@@ -1323,6 +1353,7 @@ class GCSFile(fsspec.spec.AbstractBufferedFile):
             self.metadata,
             self.consistency,
             self.content_type,
+            self.google_metadata,
             timeout=self.timeout,
         )
 
@@ -1346,6 +1377,17 @@ class GCSFile(fsspec.spec.AbstractBufferedFile):
                 return b""
             raise
 
+async def convert_google_metadata(metadata, from_google=False):
+    out = {}
+    if metadata is None:
+        return out
+
+    for key, attribute_name in SUPPORTED_GOOGLE_METADATA.items():
+        src = key if not from_google else attribute_name
+        dst = attribute_name if not from_google else key
+        if metadata.get(src) is not None:
+            out[dst] = metadata[src]
+    return out
 
 async def upload_chunk(fs, location, data, offset, size, content_type):
     head = {}
@@ -1363,13 +1405,14 @@ async def upload_chunk(fs, location, data, offset, size, content_type):
             )
     return json.loads(txt) if txt else None
 
-
 async def initiate_upload(
-    fs, bucket, key, content_type="application/octet-stream", metadata=None
+    fs, bucket, key, content_type="application/octet-stream", metadata=None,
+    google_metadata=None,
 ):
     j = {"name": key}
     if metadata:
         j["metadata"] = metadata
+    j.update(await convert_google_metadata(google_metadata))
     headers, _ = await fs._call(
         method="POST",
         path="https://storage.googleapis.com/upload/storage"
@@ -1393,6 +1436,7 @@ async def simple_upload(
     metadatain=None,
     consistency=None,
     content_type="application/octet-stream",
+    google_metadata=None,
 ):
     checker = get_consistency_checker(consistency)
     path = "https://storage.googleapis.com/upload/storage/v1/b/%s/o" % quote_plus(
@@ -1401,6 +1445,7 @@ async def simple_upload(
     metadata = {"name": key}
     if metadatain is not None:
         metadata["metadata"] = metadatain
+    metadata.update(await convert_google_metadata(google_metadata))
     metadata = json.dumps(metadata)
     template = (
         "--==0=="

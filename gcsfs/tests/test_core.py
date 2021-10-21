@@ -910,6 +910,23 @@ def test_attrs():
 
 
 @my_vcr.use_cassette(match=["all"])
+@pytest.mark.parametrize("metadata_attribute, value, result_attribute", [
+    ("custom_time", "2021-10-21T17:00:00Z", "customTime"),
+    ("cache_control", "public, max-age=3600", "cacheControl"),
+    ("content_encoding", "gzip", "contentEncoding"),
+    ("content_language", "en", "contentLanguage"),
+    ("content_disposition", "Attachment; filename=sample.empty", "contentDisposition")
+])
+def test_google_metadata(metadata_attribute, value, result_attribute):
+    with gcs_maker() as gcs:
+        gcs.touch(a)
+        assert metadata_attribute not in gcs.info(a)
+        gcs.touch(a, google_metadata={metadata_attribute: value})
+        file_info = gcs.info(a)
+        assert result_attribute in gcs.info(a)
+        assert file_info[result_attribute] == value
+
+@my_vcr.use_cassette(match=["all"])
 def test_request_user_project():
     with gcs_maker():
         gcs = GCSFileSystem(TEST_PROJECT, token=GOOGLE_TOKEN, requester_pays=True)
