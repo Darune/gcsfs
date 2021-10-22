@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "gcsfs"
+version = "0.1.0"
+description = ""
+authors = ["Julien Muniak <julien@symaps.io>"]
+
+[tool.poetry.dependencies]
+python = "^3.6.14"
+google-auth = ">=1.2"
+google-auth-oauthlib = "^0.4.6"
+google-cloud-storage = "^1.42.3"
+requests = "^2.26.0"
+decorator = ">4.1.2"
+fsspec = "2021.10.1"
+aiohttp = "^3.7.4"
+
+[tool.poetry.dev-dependencies]
+vcrpy = "^4.1.1"
+ipdb = "^0.13.9"
+pytest = "^6.2.5"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
